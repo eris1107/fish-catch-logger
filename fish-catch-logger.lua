@@ -1,7 +1,7 @@
 -- Fish Catch Logger
--- Mendukung pesan tangkapan dengan atau tanpa berat.
--- URL webhook diisi melalui panel, bukan di kode.
--- Pengiriman otomatis OFF saat script mulai.
+-- Auto-save URL ON/OFF dan minimize panda.
+-- Mendukung tangkapan dengan maupun tanpa berat.
+-- Koneksi dan pengiriman otomatis OFF saat mulai.
 
 local FISH_RARITY = {}
 
@@ -523,7 +523,6 @@ local RARITY_ORDER = {
 }
 
 local selectedRarities = {}
-
 for _, rarity in ipairs(RARITY_ORDER) do
     selectedRarities[rarity] = true
 end
@@ -589,7 +588,6 @@ end
 local function parseCatch(message)
     local plain = message:gsub("<[^>]+>", "")
 
-    -- Format tangkapan dengan berat.
     local playerName, details, weight, rarity = plain:match(
         "(%S+)%s+obtained%s+(.+)%s+%(([^()]+)%)"
         .. "%s+with%s+a%s+1%s+in%s+([%d%.]+[KkMmBb]?)"
@@ -634,7 +632,6 @@ local function parseCatch(message)
 
         else
             -- Pertahankan nama ikan asli yang sudah dikenal.
-            -- Contoh: Cosmic Hammerhead Shark, Ghost Shark.
             if classifyFish(details) ~= "Unknown" then
                 break
             end
@@ -660,7 +657,6 @@ local function parseCatch(message)
         return nil
     end
 
-    -- Tanpa berat berarti nil, bukan 0 kg.
     local weightNumber = weight and trim(weight):match(
         "^([%d%.]+[KkMmBb]?)%s*[Kk][Gg]$"
     )
@@ -684,19 +680,16 @@ local HttpService = game:GetService("HttpService")
 local TextChatService = game:GetService("TextChatService")
 
 local player = Players.LocalPlayer
-
 if not player then
     error("[Fish Logger] Jalankan dari sisi pemain/client.")
 end
 
 local playerGui = player:WaitForChild("PlayerGui", 15)
-
 if not playerGui then
     error("[Fish Logger] PlayerGui tidak tersedia.")
 end
 
 local oldGui = playerGui:FindFirstChild("FishCatchLoggerPanel")
-
 if oldGui then
     oldGui:Destroy()
 end
@@ -721,7 +714,7 @@ title.TextColor3 = Color3.new(1, 1, 1)
 title.TextSize = 16
 title.Font = Enum.Font.SourceSansBold
 title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = "fish logger | item tanpa berat"
+title.Text = "fish logger | 4 rarity + mutasi"
 title.Parent = frame
 
 local body = Instance.new("ScrollingFrame")
@@ -776,6 +769,134 @@ urlBox.PlaceholderText = "URL webhook HTTPS"
 urlBox.Text = ""
 urlBox.TextTruncate = Enum.TextTruncate.AtEnd
 ordered(urlBox)
+
+local saveFile = "fish_logger_webhook_settings.json"
+local autoSaveUrl = false
+local persistenceReady = type(readfile) == "function"
+    and type(writefile) == "function"
+
+local saveButton = Instance.new("TextButton")
+saveButton.Size = UDim2.new(1, -12, 0, 34)
+saveButton.TextColor3 = Color3.new(1, 1, 1)
+saveButton.TextSize = 14
+ordered(saveButton)
+
+local saveNotice = label(
+    "Auto-save hanya menyimpan URL; koneksi dan kirim tetap OFF saat mulai."
+)
+
+local function refreshSaveButton()
+    saveButton.Text = "Auto-save URL: "
+        .. (autoSaveUrl and "ON" or "OFF")
+
+    saveButton.BackgroundColor3 = autoSaveUrl
+        and Color3.fromRGB(35, 112, 78)
+        or Color3.fromRGB(130, 52, 52)
+end
+
+local function persistUrl()
+    if not persistenceReady then
+        return false
+    end
+
+    return pcall(function()
+        writefile(saveFile, HttpService:JSONEncode({
+            auto_save = autoSaveUrl,
+            url = autoSaveUrl and trim(urlBox.Text) or "",
+        }))
+    end)
+end
+
+-- Muat URL hanya jika sebelumnya auto-save diaktifkan.
+if persistenceReady then
+    local ok, saved = pcall(function()
+        return HttpService:JSONDecode(readfile(saveFile))
+    end)
+
+    if ok
+        and type(saved) == "table"
+        and saved.auto_save == true
+        and type(saved.url) == "string" then
+
+        autoSaveUrl = true
+        urlBox.Text = saved.url
+        saveNotice.Text = "URL lokal dimuat. Koneksi dan kirim tetap OFF."
+    end
+else
+    saveNotice.Text =
+        "Auto-save tidak tersedia: readfile/writefile tidak didukung."
+end
+
+refreshSaveButton()
+
+saveButton.Activated:Connect(function()
+    if not persistenceReady then
+        saveNotice.Text =
+            "Tidak bisa auto-save di lingkungan ini. URL hanya ada di memori sesi."
+        return
+    end
+
+    if not autoSaveUrl then
+        local url = trim(urlBox.Text)
+
+        if not url:match("^https://[^%s]+$") then
+            saveNotice.Text =
+                "Isi URL HTTPS yang valid sebelum mengaktifkan auto-save."
+            return
+        end
+    end
+
+    local previous = autoSaveUrl
+    autoSaveUrl = not autoSaveUrl
+
+    if not persistUrl() then
+        autoSaveUrl = previous
+        refreshSaveButton()
+        saveNotice.Text =
+            "Gagal menyimpan pengaturan. Status tidak diubah; file lama mungkin masih ada."
+        return
+    end
+
+    refreshSaveButton()
+
+    saveNotice.Text = autoSaveUrl
+        and "ON: URL disimpan lokal sebagai teks biasa. Hindari perangkat bersama."
+        or "OFF: URL dikosongkan dari file pengaturan; URL panel tetap untuk sesi ini."
+end)
+
+local saveVersion = 0
+
+urlBox:GetPropertyChangedSignal("Text"):Connect(function()
+    saveVersion = saveVersion + 1
+    local version = saveVersion
+
+    if not autoSaveUrl then
+        return
+    end
+
+    task.delay(0.6, function()
+        if version ~= saveVersion
+            or not autoSaveUrl
+            or not gui.Parent then
+            return
+        end
+
+        local url = trim(urlBox.Text)
+
+        if url == "" or url:match("^https://[^%s]+$") then
+            if persistUrl() then
+                saveNotice.Text =
+                    "URL lokal diperbarui. Pengiriman tetap dikendalikan tombol kirim."
+            else
+                saveNotice.Text =
+                    "Gagal memperbarui URL lokal; file mungkin masih berisi URL sebelumnya."
+            end
+        else
+            saveNotice.Text =
+                "URL belum valid; file lokal belum diperbarui."
+        end
+    end)
+end)
 
 local masterButton = Instance.new("TextButton")
 masterButton.Size = UDim2.new(1, -12, 0, 36)
@@ -861,7 +982,7 @@ local statusLabel = label("Panel siap; menunggu listener.")
 local deliveryLabel = label("Webhook: belum ada pengiriman di sesi ini.")
 local lastLabel = label("Belum ada tangkapan yang terbaca.")
 
-label("Filter untuk Legend, Mythic, Secret, Forgotten. Unknown tetap diteruskan.")
+label("Filter hanya untuk 4 rarity di atas; tangkapan Unknown tetap diteruskan.")
 
 local function setDeliveryStatus(text)
     if deliveryLabel.Parent then
@@ -1217,14 +1338,26 @@ minimizeButton.Parent = frame
 
 local restoreButton = Instance.new("TextButton")
 restoreButton.Name = "Restore"
-restoreButton.Size = UDim2.new(0, 150, 0, 40)
-restoreButton.Position = UDim2.new(0, 12, 0.5, -20)
-restoreButton.BackgroundColor3 = Color3.fromRGB(55, 92, 150)
-restoreButton.TextColor3 = Color3.new(1, 1, 1)
-restoreButton.TextSize = 16
-restoreButton.Text = "Fish Logger [+]"
+restoreButton.Size = UDim2.fromOffset(40, 40)
+restoreButton.Position = UDim2.new(0, 10, 0.5, -20)
+restoreButton.BackgroundColor3 = Color3.fromRGB(245, 246, 250)
+restoreButton.BackgroundTransparency = 0.08
+restoreButton.BorderSizePixel = 0
+restoreButton.TextColor3 = Color3.fromRGB(25, 25, 30)
+restoreButton.TextSize = 28
+restoreButton.Text = "🐼"
+restoreButton.ZIndex = 10
 restoreButton.Visible = false
 restoreButton.Parent = gui
+
+local pandaCorner = Instance.new("UICorner")
+pandaCorner.CornerRadius = UDim.new(1, 0)
+pandaCorner.Parent = restoreButton
+
+local pandaOutline = Instance.new("UIStroke")
+pandaOutline.Color = Color3.fromRGB(210, 214, 225)
+pandaOutline.Thickness = 1
+pandaOutline.Parent = restoreButton
 
 minimizeButton.Activated:Connect(function()
     frame.Visible = false
