@@ -1,6 +1,7 @@
 -- Fish Catch Logger
--- URL webhook diisi melalui panel, tidak disimpan di kode.
--- Pengiriman otomatis OFF saat script mulai dijalankan.
+-- Mendukung pesan tangkapan dengan atau tanpa berat.
+-- URL webhook diisi melalui panel, bukan di kode.
+-- Pengiriman otomatis OFF saat script mulai.
 
 local FISH_RARITY = {}
 
@@ -522,6 +523,7 @@ local RARITY_ORDER = {
 }
 
 local selectedRarities = {}
+
 for _, rarity in ipairs(RARITY_ORDER) do
     selectedRarities[rarity] = true
 end
@@ -587,10 +589,18 @@ end
 local function parseCatch(message)
     local plain = message:gsub("<[^>]+>", "")
 
+    -- Format tangkapan dengan berat.
     local playerName, details, weight, rarity = plain:match(
         "(%S+)%s+obtained%s+(.+)%s+%(([^()]+)%)"
         .. "%s+with%s+a%s+1%s+in%s+([%d%.]+[KkMmBb]?)"
     )
+
+    -- Format item tanpa berat.
+    if not playerName then
+        playerName, details, rarity = plain:match(
+            "(%S+)%s+obtained%s+(.+)%s+with%s+a%s+1%s+in%s+([%d%.]+[KkMmBb]?)"
+        )
+    end
 
     if not playerName then
         return nil
@@ -612,7 +622,6 @@ local function parseCatch(message)
         local lowered = details:lower()
         local matched = false
 
-        -- Big dan Shiny dipisahkan sebagai penanda khusus.
         if lowered:sub(1, 4) == "big " then
             big = true
             details = trim(details:sub(5))
@@ -624,7 +633,7 @@ local function parseCatch(message)
             matched = true
 
         else
-            -- Jangan memotong nama ikan asli yang sudah dikenal.
+            -- Pertahankan nama ikan asli yang sudah dikenal.
             -- Contoh: Cosmic Hammerhead Shark, Ghost Shark.
             if classifyFish(details) ~= "Unknown" then
                 break
@@ -651,7 +660,8 @@ local function parseCatch(message)
         return nil
     end
 
-    local weightNumber = trim(weight):match(
+    -- Tanpa berat berarti nil, bukan 0 kg.
+    local weightNumber = weight and trim(weight):match(
         "^([%d%.]+[KkMmBb]?)%s*[Kk][Gg]$"
     )
 
@@ -711,7 +721,7 @@ title.TextColor3 = Color3.new(1, 1, 1)
 title.TextSize = 16
 title.Font = Enum.Font.SourceSansBold
 title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = "fish logger | 4 rarity + mutasi"
+title.Text = "fish logger | item tanpa berat"
 title.Parent = frame
 
 local body = Instance.new("ScrollingFrame")
@@ -851,7 +861,7 @@ local statusLabel = label("Panel siap; menunggu listener.")
 local deliveryLabel = label("Webhook: belum ada pengiriman di sesi ini.")
 local lastLabel = label("Belum ada tangkapan yang terbaca.")
 
-label("Filter hanya untuk 4 rarity di atas; tangkapan Unknown tetap diteruskan.")
+label("Filter untuk Legend, Mythic, Secret, Forgotten. Unknown tetap diteruskan.")
 
 local function setDeliveryStatus(text)
     if deliveryLabel.Parent then
@@ -1090,7 +1100,7 @@ local function sendCatch(catch)
         .. " | " .. catch.fish_name
         .. " | " .. rarityCategory
         .. " | mutasi: " .. (catch.mutation or "-")
-        .. " | " .. catch.weight_raw
+        .. " | " .. (catch.weight_raw or "tanpa berat")
         .. " | " .. catch.rarity_raw
 
     if enabled and activeUrl then
